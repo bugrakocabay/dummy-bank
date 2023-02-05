@@ -44,8 +44,10 @@ jobs:
       - name: Run migrations
         run: make migrateup
 
-      - name: Test
-        run: make test
+      - name: Unit tests
+        run: |
+            sudo go test ./... -coverprofile coverage.out -covermode count
+            sudo go tool cover -func coverage.out
 
       - name: Quality Gate - Test coverage shall be above threshold
         env:
