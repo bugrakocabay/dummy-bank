@@ -2,14 +2,15 @@ package api
 
 import (
 	"database/sql"
+	"errors"
 	db "github.com/bugrakocabay/dummy-bank/db/sqlc"
+	"github.com/bugrakocabay/dummy-bank/token"
 	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
 	"net/http"
 )
 
 type createAccountRequest struct {
-	Owner    string `json:"owner" binding:"required"`
 	Currency string `json:"currency" binding:"required,oneof=USD EUR"`
 }
 
@@ -20,8 +21,9 @@ func (server *Server) createAccount(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
 	arg := db.CreateAccountParams{
-		Owner:    req.Owner,
+		Owner:    authPayload.Username,
 		Currency: req.Currency,
 		Balance:  0,
 	}
@@ -62,6 +64,12 @@ func (server *Server) getAccount(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+	if account.Owner != authPayload.Username {
+		err = errors.New("account does not belong to you")
+		ctx.JSON(http.StatusUnauthorized, errorResponse(err))
+		return
+	}
 	ctx.JSON(http.StatusOK, account)
 }
 
@@ -77,7 +85,9 @@ func (server *Server) listAccounts(ctx *gin.Context) {
 		return
 	}
 
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
 	arg := db.ListAccountsParams{
+		Owner:  authPayload.Username,
 		Limit:  req.PageSize,
 		Offset: (req.PageID - 1) * req.PageSize,
 	}
@@ -106,7 +116,16 @@ func (server *Server) updateAccount(ctx *gin.Context) {
 		ID:      req.ID,
 		Balance: req.Balance,
 	}
-	account, err := server.store.UpdateAccount(ctx, arg)
+
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+	account, err := server.store.GetAccount(ctx, arg.ID)
+	if account.Owner != authPayload.Username {
+		err = errors.New("account does not belong to you")
+		ctx.JSON(http.StatusUnauthorized, errorResponse(err))
+		return
+	}
+
+	account, err = server.store.UpdateAccount(ctx, arg)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			ctx.JSON(http.StatusBadRequest, errorResponse(err))
@@ -131,7 +150,14 @@ func (server *Server) deleteAccount(ctx *gin.Context) {
 	}
 
 	var err error
-	_, err = server.store.GetAccount(ctx, req.ID)
+	account, err := server.store.GetAccount(ctx, req.ID)
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+
+	if account.Owner != authPayload.Username {
+		err = errors.New("account does not belong to you")
+		ctx.JSON(http.StatusUnauthorized, errorResponse(err))
+		return
+	}
 	if err != nil {
 		if err == sql.ErrNoRows {
 			ctx.JSON(http.StatusBadRequest, errorResponse(err))
